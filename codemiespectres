@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 from scipy.optimize import minimize
 import re
 
-#il faut inésrer les fichiers tsv dans le projet python pour pouvoir les lire : clic droit sur pycharmprojet-->open in-->explorer puis copier les fihciers tsv dans pycharmproject.
+#il faut insérer les fichiers tsv dans le projet python pour pouvoir les lire : clic droit sur pycharmprojet-->open in-->explorer puis copier les fihciers tsv dans pycharmproject.
 
 log_absorbance = True  # True pour échelle log mettre false sinon
 
