@@ -11,7 +11,7 @@ import re
 log_absorbance = True  # True pour échelle log mettre false sinon
 
 # ----------- Chargement des spectres expérimentaux (avec filtrage à la lecture) -----------
-nom_fichier = 'spectresdilués.tsv'
+nom_fichier = 'bécher1tresdilues.tsv'
 try:
     with open(nom_fichier, 'r', encoding='utf-8') as f:
         lignes = f.readlines()
