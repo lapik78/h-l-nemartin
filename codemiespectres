@@ -1,0 +1,122 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import miepython
+from scipy.interpolate import interp1d
+from scipy.optimize import minimize
+import re
+
+#il faut inésrer les fichiers tsv dans le projet python pour pouvoir les lire : clic droit sur pycharmprojet-->open in-->explorer puis copier les fihciers tsv dans pycharmproject.
+
+log_absorbance = True  # True pour échelle log mettre false sinon
+
+# ----------- Chargement des spectres expérimentaux (avec filtrage à la lecture) -----------
+nom_fichier = 'spectresdilués.tsv'
+try:
+    with open(nom_fichier, 'r', encoding='utf-8') as f:
+        lignes = f.readlines()
+
+    blocs = []
+    bloc_courant = []
+    for ligne in lignes:
+        if re.match(r'^\s*\d+(\.\d+)?\s+[-+]?\d+(\.\d+)?', ligne):
+            valeurs = list(map(float, ligne.strip().split()))
+            if 200 <= valeurs[0] <= 600:
+                bloc_courant.append(valeurs)
+        elif bloc_courant:
+            blocs.append(bloc_courant)
+            bloc_courant = []
+    if bloc_courant:
+        blocs.append(bloc_courant)
+
+    spectres = []
+    for bloc in blocs:
+        df_bloc = pd.DataFrame(bloc, columns=['Wavelength', 'Absorbance'])
+        spectres.append(df_bloc)
+
+except FileNotFoundError:
+    print(f"Erreur : Le fichier '{nom_fichier}' est introuvable.")
+    exit()
+except Exception as e:
+    print(f"Erreur lors du chargement des spectres : {e}")
+    exit()
+
+# ----------- Chargement des indices optiques (eau et silice)-----------
+try:
+    df_indice_siO2 = pd.read_csv('Malitson.csv')
+    wl_nm_siO2 = df_indice_siO2['wl'] * 1e3
+    n_real_siO2 = pd.to_numeric(df_indice_siO2['n'], errors='coerce')
+    n_imag_siO2 = np.zeros_like(n_real_siO2)
+    interp_n_real_siO2 = interp1d(wl_nm_siO2, n_real_siO2, kind='linear', bounds_error=False, fill_value="extrapolate")
+    interp_n_imag_siO2 = interp1d(wl_nm_siO2, n_imag_siO2, kind='linear', bounds_error=False, fill_value=0)
+except Exception as e:
+    print(f"Erreur lors du chargement de l’indice de la silice : {e}")
+    exit()
+
+try:
+    df_indice_eau = pd.read_csv('indiceeau.csv')
+    wl_nm_eau = df_indice_eau['wl'] * 1e3
+    n_real_eau = pd.to_numeric(df_indice_eau['n'], errors='coerce')
+    interp_n_real_eau = interp1d(wl_nm_eau, n_real_eau, kind='linear', bounds_error=False, fill_value="extrapolate")
+except Exception as e:
+    print(f"Erreur lors du chargement de l’indice de l’eau : {e}")
+    exit()
+
+# ----------- Paramètres de simulation Mie -----------
+l_cuve = 1e-3 #largeur de la cuve en m
+
+# ----------- Fonction : absorbance Mie simulée -----------
+def simulate_mie_abs(lambda_exp_nm, rayon_m, concentration):
+    lambda_exp_m = lambda_exp_nm * 1e-9
+    n_silice = interp_n_real_siO2(lambda_exp_nm) + 1j * interp_n_imag_siO2(lambda_exp_nm)
+    n_eau = interp_n_real_eau(lambda_exp_nm)
+
+    Q_ext = []
+    for i, lambd in enumerate(lambda_exp_m):
+        m = n_silice[i] / n_eau[i]
+        x = 2 * np.pi * rayon_m * n_eau[i] / lambd
+        qext, *_ = miepython.mie(m, x)
+        Q_ext.append(qext)
+
+    Q_ext = np.array(Q_ext)
+    section_geo = np.pi * rayon_m**2
+    absorbance = Q_ext * section_geo * concentration * l_cuve
+    return absorbance
+
+# ----------- Ajustement de tous les spectres -----------
+for i, spectre in enumerate(spectres):
+    print(f"\nTraitement du spectre {i+1}...")
+
+    lambda_exp = spectre['Wavelength'].values
+    abs_exp = spectre['Absorbance'].values
+
+
+    def erreur(params):
+        rayon, concentration = params
+        if rayon < 1e-9 or rayon > 100e-9 or concentration < 1e17 or concentration > 1e23:
+            return np.inf
+        A_sim = simulate_mie_abs(lambda_exp, rayon, concentration)
+        return np.mean((A_sim - abs_exp) ** 2)
+
+    init_params = [50e-9, 1e19]
+    result = minimize(erreur, init_params, method='Nelder-Mead')
+    rayon_opt, concentration_opt = result.x
+
+    print(f"  Rayon optimal : {rayon_opt*1e9:.2f} nm")
+    print(f"  Concentration optimale : {concentration_opt:.2e} particules/m^3")
+
+    A_mie_opt = simulate_mie_abs(lambda_exp, rayon_opt, concentration_opt)
+
+    # --- Tracé ---
+    plt.figure(figsize=(10, 6))
+    plt.plot(lambda_exp, abs_exp, label='Expérimental', color='red')
+    plt.plot(lambda_exp, A_mie_opt, label='Mie (fit)', color='blue')
+    plt.xlabel("Longueur d'onde (nm)")
+    plt.ylabel("Absorbance (log)" if log_absorbance else "Absorbance")
+    plt.title(f"Ajustement Mie du spectre expérimental {i+1}")
+    plt.legend()
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    if log_absorbance:
+        plt.yscale('log')
+    plt.tight_layout()
+    plt.show()
